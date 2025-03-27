@@ -1,20 +1,20 @@
+
 #!/bin/bash
 
 # This script helps deploy and manage the PDF generation server
 
-# Check if package.json exists
-check_package_json() {
+# Create package.json if it doesn't exist
+create_package_json() {
   if [ ! -f "package.json" ]; then
-    echo "package.json not found! Creating base package.json..."
-    cat > package.json << 'EOL'
+    echo "Creating package.json..."
+    cat > package.json << EOF
 {
   "name": "pdf-generation-server",
   "version": "1.0.0",
-  "description": "A Node.js server for generating PDF resumes from HTML templates using Puppeteer",
+  "description": "Server for generating PDF resumes",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js",
-    "dev": "nodemon server.js"
+    "start": "node server.js"
   },
   "dependencies": {
     "express": "^4.18.2",
@@ -22,77 +22,118 @@ check_package_json() {
     "body-parser": "^1.20.2",
     "helmet": "^7.0.0",
     "morgan": "^1.10.0",
-    "puppeteer": "^21.0.0",
+    "puppeteer": "^20.7.3",
     "fs-extra": "^11.1.1",
     "dotenv": "^16.3.1"
-  },
-  "engines": {
-    "node": ">=16.0.0"
   }
 }
-EOL
-    echo "Created package.json file"
+EOF
+    echo "package.json created successfully"
+  else
+    echo "package.json already exists"
   fi
 }
 
 # Install dependencies
 setup() {
   echo "Setting up PDF generation server..."
-  check_package_json
-  
-  # Check if npm is installed
-  if ! command -v npm &> /dev/null; then
-    echo "npm not found! Installing Node.js and npm..."
-    curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
-    sudo apt-get install -y nodejs
-  fi
-  
+  create_package_json
   echo "Installing dependencies..."
   npm install
   
   # Check if PM2 is installed
   if ! command -v pm2 &> /dev/null; then
-    echo "PM2 not found! Installing PM2 globally..."
+    echo "Installing PM2 globally..."
     npm install -g pm2
+  fi
+  
+  # Check if Chromium is installed
+  if ! command -v chromium-browser &> /dev/null; then
+    echo "Installing Chromium browser..."
+    apt-get update && apt-get install -y chromium-browser
+  fi
+  
+  echo "Setup completed successfully!"
+}
+
+# Verify requirements
+verify() {
+  echo "Verifying requirements..."
+  local all_good=true
+  
+  # Check Node.js
+  if ! command -v node &> /dev/null; then
+    echo "❌ Node.js is not installed"
+    all_good=false
+  else
+    echo "✅ Node.js is installed: $(node -v)"
+  fi
+  
+  # Check PM2
+  if ! command -v pm2 &> /dev/null; then
+    echo "❌ PM2 is not installed"
+    all_good=false
+  else
+    echo "✅ PM2 is installed: $(pm2 -v)"
+  fi
+  
+  # Check Chromium
+  if ! command -v chromium-browser &> /dev/null; then
+    echo "❌ Chromium browser is not installed"
+    all_good=false
+  else
+    echo "✅ Chromium browser is installed"
+  fi
+  
+  # Check dependencies
+  if [ ! -d "node_modules" ]; then
+    echo "❌ Dependencies are not installed"
+    all_good=false
+  else
+    echo "✅ Dependencies are installed"
+  fi
+  
+  if [ "$all_good" = true ]; then
+    echo "All requirements are met! 🎉"
+  else
+    echo "Some requirements are missing. Please run './deploy.sh setup' to install them."
   fi
 }
 
-# Verify Chromium installation
-verify() {
-  echo "Verifying system requirements..."
+# Safe update from git repository
+safe_update() {
+  echo "Safely updating from git repository..."
   
-  # Check for Chromium browser
-  if [ ! -f "/usr/bin/chromium-browser" ]; then
-    echo "Chromium browser not found. Installing Chromium..."
-    sudo apt-get update
-    sudo apt-get install -y chromium-browser
-  else
-    echo "✓ Chromium browser is installed"
-  fi
+  # Stash any local changes
+  git stash
   
-  # Verify other dependencies
-  if ! command -v npm &> /dev/null; then
-    echo "× npm is not installed. Please run ./deploy.sh setup"
-    exit 1
-  else
-    echo "✓ npm is installed"
-  fi
+  # Pull latest changes
+  git pull
   
-  if ! command -v pm2 &> /dev/null; then
-    echo "× PM2 is not installed. Please run ./deploy.sh setup"
-    exit 1
-  else
-    echo "✓ PM2 is installed"
-  fi
+  # Create package.json if needed after pull
+  create_package_json
   
-  echo "System verification complete!"
+  # Install dependencies
+  npm install
+  
+  # Apply stashed changes if any
+  git stash pop 2>/dev/null || echo "No stashed changes to apply"
+  
+  echo "Update completed successfully!"
 }
 
 # Start the server using PM2
 start() {
   echo "Starting PDF generation server with PM2..."
-  check_package_json
-  pm2 start server.js --name "pdf-server"
+  # First check if server is already running
+  pm2 describe pdf-server > /dev/null
+  if [ $? -eq 0 ]; then
+    echo "Server is already running. Restarting..."
+    pm2 restart pdf-server
+  else
+    pm2 start server.js --name "pdf-server"
+  fi
+  echo "Server started successfully! 🚀"
 }
 
 # Stop the server
@@ -115,32 +156,8 @@ status() {
 
 # Update from git repository
 update() {
-  echo "Updating from git repository..."
-  
-  # Stash any local changes before pulling
-  echo "Saving local changes..."
-  git stash
-  
-  # Pull the latest changes
-  echo "Pulling latest changes..."
-  git pull
-  
-  # Apply stashed changes if needed
-  echo "Applying saved local changes..."
-  git stash pop
-  
-  # Install dependencies
-  check_package_json
-  npm install
-  
-  # Restart the server
-  pm2 restart pdf-server || pm2 start server.js --name "pdf-server"
-}
-
-# Show logs
-logs() {
-  echo "Showing server logs..."
-  pm2 logs pdf-server
+  safe_update
+  restart
 }
 
 # Show help
@@ -149,14 +166,13 @@ help() {
   echo "Usage: ./deploy.sh [command]"
   echo ""
   echo "Commands:"
-  echo "  setup    - Set up environment and install dependencies"
-  echo "  verify   - Verify system requirements (Chromium, etc.)"
+  echo "  setup    - Install dependencies and prepare environment"
+  echo "  verify   - Check if all requirements are met"
   echo "  start    - Start the server with PM2"
   echo "  stop     - Stop the server"
   echo "  restart  - Restart the server"
   echo "  status   - Check server status"
-  echo "  update   - Update from git repository and restart"
-  echo "  logs     - Show server logs"
+  echo "  update   - Safely update from git repository and restart"
 }
 
 # Process command
@@ -181,9 +197,6 @@ case "$1" in
     ;;
   update)
     update
-    ;;
-  logs)
-    logs
     ;;
   *)
     help
