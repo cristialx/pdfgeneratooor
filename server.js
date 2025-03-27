@@ -1,3 +1,4 @@
+
 const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
@@ -45,10 +46,20 @@ app.post('/generate-pdf', async (req, res) => {
     // Generate HTML based on template and data
     const html = generateResumeHTML(resumeData);
     
-    // Launch puppeteer
+    // Launch puppeteer with specific Chromium browser path
     const browser = await puppeteer.launch({
       headless: 'new',
-      args: ['--no-sandbox', '--disable-setuid-sandbox']
+      args: [
+        '--no-sandbox', 
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-accelerated-2d-canvas',
+        '--no-first-run',
+        '--no-zygote',
+        '--single-process',
+        '--disable-gpu'
+      ],
+      executablePath: '/usr/bin/chromium-browser'  // Path to Chromium on Ubuntu/Debian
     });
     
     const page = await browser.newPage();
