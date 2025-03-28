@@ -122,6 +122,32 @@ safe_update() {
   echo "Update completed successfully!"
 }
 
+# Check for processes using port 80
+check_port_80() {
+  echo "Checking for processes using port 80..."
+  local processes=$(lsof -i :80 -t)
+  
+  if [ -z "$processes" ]; then
+    echo "No processes found using port 80."
+    return 0
+  else
+    echo "The following processes are using port 80:"
+    lsof -i :80
+    
+    if [ "$1" = "kill" ]; then
+      echo "Attempting to stop processes using port 80..."
+      for pid in $processes; do
+        echo "Stopping process $pid..."
+        kill -15 $pid
+        sleep 1
+      done
+      echo "Done stopping processes."
+    fi
+    
+    return 1
+  fi
+}
+
 # Start the server using PM2
 start() {
   echo "Starting PDF generation server with PM2..."
@@ -131,7 +157,8 @@ start() {
     echo "Server is already running. Restarting..."
     pm2 restart pdf-server
   else
-    pm2 start server.js --name "pdf-server"
+    # Ensure we're using port 3000 as specified in .env
+    PORT=3000 pm2 start server.js --name "pdf-server"
   fi
   echo "Server started successfully! 🚀"
 }
@@ -160,19 +187,68 @@ update() {
   restart
 }
 
+# Setup nginx
+setup_nginx() {
+  echo "Setting up Nginx configuration..."
+  if [ -f /etc/nginx/sites-available/pdf-server ]; then
+    echo "Nginx configuration already exists."
+  else
+    echo "Creating Nginx configuration..."
+    sudo cp nginx-config /etc/nginx/sites-available/pdf-server
+    
+    # Create symbolic link if it doesn't exist
+    if [ ! -f /etc/nginx/sites-enabled/pdf-server ]; then
+      sudo ln -s /etc/nginx/sites-available/pdf-server /etc/nginx/sites-enabled/
+    fi
+  fi
+  
+  # Check for processes using port 80
+  check_port_80
+  
+  echo "Checking Nginx configuration..."
+  sudo nginx -t
+  
+  if [ $? -eq 0 ]; then
+    echo "Nginx configuration is valid. Restarting Nginx..."
+    sudo systemctl restart nginx
+  else
+    echo "Nginx configuration is invalid. Please check the configuration file."
+  fi
+}
+
+# Fix nginx issues
+fix_nginx() {
+  echo "Attempting to fix Nginx issues..."
+  
+  # Check for processes using port 80 and kill them if requested
+  check_port_80 "kill"
+  
+  echo "Restarting Nginx..."
+  sudo systemctl restart nginx
+  
+  if [ $? -eq 0 ]; then
+    echo "Nginx started successfully! 🎉"
+  else
+    echo "Failed to start Nginx. Check if another process is still using port 80."
+  fi
+}
+
 # Show help
 help() {
   echo "PDF Generation Server deployment script"
   echo "Usage: ./deploy.sh [command]"
   echo ""
   echo "Commands:"
-  echo "  setup    - Install dependencies and prepare environment"
-  echo "  verify   - Check if all requirements are met"
-  echo "  start    - Start the server with PM2"
-  echo "  stop     - Stop the server"
-  echo "  restart  - Restart the server"
-  echo "  status   - Check server status"
-  echo "  update   - Safely update from git repository and restart"
+  echo "  setup       - Install dependencies and prepare environment"
+  echo "  verify      - Check if all requirements are met"
+  echo "  start       - Start the server with PM2"
+  echo "  stop        - Stop the server"
+  echo "  restart     - Restart the server"
+  echo "  status      - Check server status"
+  echo "  update      - Safely update from git repository and restart"
+  echo "  setup_nginx - Set up Nginx as a reverse proxy"
+  echo "  fix_nginx   - Attempt to fix Nginx issues (kills processes using port 80)"
+  echo "  check_port  - Check what process is using port 80"
 }
 
 # Process command
@@ -197,6 +273,15 @@ case "$1" in
     ;;
   update)
     update
+    ;;
+  setup_nginx)
+    setup_nginx
+    ;;
+  fix_nginx)
+    fix_nginx
+    ;;
+  check_port)
+    check_port_80
     ;;
   *)
     help
